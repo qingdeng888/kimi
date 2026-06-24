@@ -128,6 +128,8 @@ class ChatCompletions:
             messages=parsed_messages,
             context=context,
             enable_web_search=bool(kwargs.get("enable_web_search", False)),
+            tools=kwargs.get("tools"),
+            tool_choice=kwargs.get("tool_choice", "auto"),
         )
 
         if stream:
@@ -135,11 +137,13 @@ class ChatCompletions:
                 request_body=request_body,
                 model=model,
                 context=context,
+                tools=kwargs.get("tools"),
             )
         return await self._client._sync_chat(
             request_body=request_body,
             model=model,
             context=context,
+            tools=kwargs.get("tools"),
         )
 
 
@@ -287,7 +291,11 @@ class Kimi2API:
         messages: List[Any],
         context: ConversationContext,
         enable_web_search: bool,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: str = "auto",
     ) -> Dict[str, Any]:
+        from .tool_handler import inject_tool_instructions
+
         parsed_messages = [
             message
             if isinstance(message, Message)
@@ -300,6 +308,34 @@ class Kimi2API:
             )
             for message in messages
         ]
+
+        # 如果有工具定义，将工具指令注入到消息中
+        messages_dict = [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "name": msg.name,
+                "tool_call_id": msg.tool_call_id,
+                "tool_calls": msg.tool_calls,
+            }
+            for msg in parsed_messages
+        ]
+
+        if tools and tool_choice != "none":
+            messages_dict = inject_tool_instructions(messages_dict, tools)
+
+        # 重新解析消息
+        parsed_messages = [
+            Message(
+                role=msg.get("role", "user"),
+                content=msg.get("content", ""),
+                name=msg.get("name"),
+                tool_call_id=msg.get("tool_call_id"),
+                tool_calls=msg.get("tool_calls"),
+            )
+            for msg in messages_dict
+        ]
+
         content = _format_messages(parsed_messages)
         if not content:
             raise ValueError("messages content must not be empty")
@@ -461,7 +497,11 @@ class Kimi2API:
         request_body: Dict[str, Any],
         model: str,
         context: ConversationContext,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> ChatCompletion:
+        from .tool_parser import parse_tool_calls
+        from .tool_handler import extract_tool_names
+
         content = _encode_connect_request(request_body)
         reasoning_parts: List[str] = []
         content_parts: List[str] = []
@@ -543,12 +583,19 @@ class Kimi2API:
             raise KimiAPIError(str(last_error))
 
         final_id = context.remote_chat_id or context.request_conversation_id
+
+        # 解析工具调用
+        full_content = "".join(content_parts)
+        tool_names = extract_tool_names(tools) if tools else []
+        parse_result = parse_tool_calls(full_content, tool_names)
+
         return build_chat_completion(
             completion_id=final_id,
             created=created,
             model=model,
-            content_parts=content_parts,
+            content_parts=[parse_result.cleaned_text] if parse_result.cleaned_text else content_parts,
             reasoning_parts=reasoning_parts,
+            tool_calls=[tc.to_dict() for tc in parse_result.tool_calls] if parse_result.has_tool_calls else None,
         )
 
     def _stream_chat(
@@ -556,7 +603,11 @@ class Kimi2API:
         request_body: Dict[str, Any],
         model: str,
         context: ConversationContext,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncIterator[ChatCompletionChunk]:
+        from .tool_parser import parse_tool_calls, detect_partial_tool_call
+        from .tool_handler import extract_tool_names
+
         content = _encode_connect_request(request_body)
 
         async def generator() -> AsyncIterator[ChatCompletionChunk]:
@@ -570,6 +621,12 @@ class Kimi2API:
                 if self._account_pool is not None and self._account_pool.configured
                 else self._max_retries
             )
+
+            # 工具调用检测相关
+            accumulated_content: List[str] = []
+            tool_names = extract_tool_names(tools) if tools else []
+            in_tool_call = False
+            tool_calls_sent = False
 
             for attempt in range(1, attempt_limit + 1):
                 runtime: Optional[Union[KimiAccountRuntime, _LegacyRuntime]] = None
@@ -596,16 +653,69 @@ class Kimi2API:
                                 )
 
                             if delta["content"]:
-                                yield content_chunk(
-                                    chunk_id=chunk_id,
-                                    created=created,
-                                    model=model,
-                                    content=delta["content"],
-                                )
+                                accumulated_content.append(delta["content"])
+                                full_content = "".join(accumulated_content)
+
+                                # 检测是否进入工具调用
+                                is_partial, _ = detect_partial_tool_call(full_content)
+
+                                if is_partial and not in_tool_call:
+                                    in_tool_call = True
+
+                                # 如果不在工具调用中，正常输出内容
+                                if not in_tool_call:
+                                    yield content_chunk(
+                                        chunk_id=chunk_id,
+                                        created=created,
+                                        model=model,
+                                        content=delta["content"],
+                                    )
 
                             if "done" in event:
-                                sent_stop = True
-                                yield stop_chunk(chunk_id=chunk_id, created=created, model=model)
+                                # 完成时解析工具调用
+                                if tools and accumulated_content:
+                                    full_content = "".join(accumulated_content)
+                                    parse_result = parse_tool_calls(full_content, tool_names)
+
+                                    if parse_result.has_tool_calls and not tool_calls_sent:
+                                        # 发送工具调用 chunk
+                                        tool_calls_dict = [tc.to_dict() for tc in parse_result.tool_calls]
+                                        yield ChatCompletionChunk(
+                                            id=chunk_id,
+                                            created=created,
+                                            model=model,
+                                            choices=[{
+                                                "index": 0,
+                                                "delta": {"tool_calls": tool_calls_dict},
+                                                "finish_reason": None,
+                                            }],
+                                        )
+                                        tool_calls_sent = True
+
+                                        # 发送 stop chunk，finish_reason 为 tool_calls
+                                        yield ChatCompletionChunk(
+                                            id=chunk_id,
+                                            created=created,
+                                            model=model,
+                                            choices=[{
+                                                "index": 0,
+                                                "delta": {},
+                                                "finish_reason": "tool_calls",
+                                            }],
+                                        )
+                                        sent_stop = True
+                                    elif parse_result.cleaned_text and in_tool_call:
+                                        # 如果有清理后的内容，发送它
+                                        yield content_chunk(
+                                            chunk_id=chunk_id,
+                                            created=created,
+                                            model=model,
+                                            content=parse_result.cleaned_text,
+                                        )
+
+                                if not sent_stop:
+                                    sent_stop = True
+                                    yield stop_chunk(chunk_id=chunk_id, created=created, model=model)
                                 self._record_runtime_success(runtime)
                                 return
                         self._record_runtime_success(runtime)

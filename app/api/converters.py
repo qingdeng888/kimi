@@ -43,6 +43,10 @@ def _chat_completion_to_dict(response: ChatCompletion) -> Dict[str, Any]:
         if choice.message.reasoning_content:
             message["reasoning_content"] = choice.message.reasoning_content
 
+        # 添加工具调用
+        if choice.tool_calls:
+            message["tool_calls"] = choice.tool_calls
+
         choices.append(
             {
                 "index": choice.index,

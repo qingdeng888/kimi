@@ -1,5 +1,5 @@
 import time
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from .protocol import (
     ChatCompletion,
@@ -17,12 +17,23 @@ def build_chat_completion(
     model: str,
     content_parts: List[str],
     reasoning_parts: List[str],
+    tool_calls: Optional[List[Dict[str, Any]]] = None,
 ) -> ChatCompletion:
+    content = "".join(content_parts).strip() or None
+
+    # 如果有工具调用，content 应该为 None
+    if tool_calls:
+        content = None
+
     message = ChatCompletionMessage(
         role="assistant",
-        content="".join(content_parts).strip() or None,
+        content=content,
         reasoning_content="".join(reasoning_parts).strip() or None,
     )
+
+    # 根据是否有工具调用设置 finish_reason
+    finish_reason = "tool_calls" if tool_calls else "stop"
+
     return ChatCompletion(
         id=completion_id,
         created=created,
@@ -31,7 +42,8 @@ def build_chat_completion(
             ChatCompletionChoice(
                 index=0,
                 message=message,
-                finish_reason="stop",
+                finish_reason=finish_reason,
+                tool_calls=tool_calls,
             )
         ],
         usage=ChatCompletionUsage(

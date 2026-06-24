@@ -120,6 +120,7 @@ class ChatCompletionChoice:
     index: int
     message: ChatCompletionMessage
     finish_reason: str
+    tool_calls: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass

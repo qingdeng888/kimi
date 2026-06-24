@@ -94,6 +94,10 @@ async def create_chat_completion(request: Request) -> Any:
             detail={"message": "`messages` is required", "type": "invalid_request_error"},
         )
 
+    # 提取工具定义
+    tools = payload.get("tools")
+    tool_choice = payload.get("tool_choice", "auto")
+
     try:
         features = await _resolve_model(payload)
     except ModelResolutionError as exc:
@@ -115,6 +119,8 @@ async def create_chat_completion(request: Request) -> Any:
                 messages=messages,
                 conversation_id=conversation_id,
                 enable_web_search=features["enable_web_search"],
+                tools=tools,
+                tool_choice=tool_choice,
             ),
             media_type="text/event-stream",
             headers={
@@ -132,6 +138,8 @@ async def create_chat_completion(request: Request) -> Any:
             stream=False,
             conversation_id=conversation_id,
             enable_web_search=features["enable_web_search"],
+            tools=tools,
+            tool_choice=tool_choice,
         )
         result.model = features["request_model"]
         return _chat_completion_to_dict(result)

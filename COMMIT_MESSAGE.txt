@@ -1,0 +1,55 @@
+feat: 实现 OpenAI 兼容的工具调用功能
+
+参考 ds2api 项目，为 Kimi2API 添加完整的工具调用（Tool Calling）支持。
+
+## 新增功能
+
+- 工具定义自动注入到系统提示词
+- 智能解析 Kimi 模型输出的工具调用标记
+- 完全兼容 OpenAI tools 和 tool_choice 参数
+- 支持流式和非流式输出
+- 自动修复常见 JSON 格式错误
+- 支持多个工具定义和并行调用
+
+## 新增文件
+
+- app/kimi/tool_handler.py - 工具定义处理器
+- app/kimi/tool_parser.py - 工具调用解析器
+- tests/test_tool_calling.py - 完整测试套件
+- examples/tool_calling_example.py - 使用示例
+- docs/TOOL_CALLING.md - 详细文档
+- IMPLEMENTATION_SUMMARY.md - 实现总结
+
+## 修改文件
+
+- app/api/routes.py - 添加 tools 参数支持
+- app/api/converters.py - 响应包含 tool_calls
+- app/api/streaming.py - 流式响应支持
+- app/kimi/client.py - 客户端集成
+- app/kimi/chunks.py - 构建响应支持工具调用
+- app/kimi/protocol.py - 扩展数据结构
+- README.md - 添加功能说明
+
+## 技术细节
+
+1. 工具定义通过提示词工程注入到消息中
+2. 支持 [function_calls] 和 <function_calls> 两种格式
+3. 解析器自动清理文本并提取工具调用
+4. 完全兼容 OpenAI API 响应格式
+5. finish_reason 正确设置为 "tool_calls"
+
+## 测试
+
+- 13 个单元测试覆盖所有功能
+- 语法检查和导入测试通过
+- 提供完整的使用示例代码
+
+## 兼容性
+
+- ✅ OpenAI Python SDK
+- ✅ OpenAI Node.js SDK
+- ✅ LangChain
+- ✅ LlamaIndex
+- ✅ 其他 OpenAI 兼容客户端
+
+参考: https://github.com/CJackHwang/ds2api

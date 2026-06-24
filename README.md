@@ -1,7 +1,8 @@
 # Kimi2API
 
 Kimi2API 是一个基于 Kimi Web 协议封装的 OpenAI 兼容 API 服务。它把 Kimi 的聊天能力转换成常见的 `/v1` 接口，方便 OpenAI SDK、LobeChat、NextChat、one-api 风格客户端接入。
-_（简单来说，这就是用来玩酒馆的，没有做toolcall之类编程方向的优化，因为2api的能力懂得都懂）_
+
+**🎉 新功能：现已支持 OpenAI 兼容的工具调用（Tool Calling / Function Calling）！** 可用于 LangChain、LlamaIndex 等 AI 应用框架。
 
 项目内置 React 管理面板，支持 Kimi 账号池、对外 API Key、请求日志、运行概览和基础运维操作。
 
@@ -95,6 +96,7 @@ _（简单来说，这就是用来玩酒馆的，没有做toolcall之类编程�
 - OpenAI 兼容接口：Models、Chat Completions、Legacy Completions、Responses API。
 - 支持流式和非流式输出。
 - 支持 Kimi thinking、search、agent 相关模型能力和兼容参数。
+- **支持 OpenAI 兼容的工具调用 (Tool Calling / Function Calling)**。
 - 支持多个 Kimi 账号组成账号池，按健康状态、并发占用和轮询策略调度。
 - 支持 refresh token 自动换取 access token，并把换到的 access token 缓存到本地，服务重启后可复用。
 - 支持 access token 账号，但 access token 被上游拒绝后需要手动更新或改用 refresh token。
@@ -348,6 +350,50 @@ curl http://127.0.0.1:8000/v1/responses \
     "input": "今天有什么值得关注的 AI 新闻？"
   }'
 ```
+
+### 工具调用 (Tool Calling)
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="your_api_key_here",
+    base_url="http://127.0.0.1:8000/v1",
+)
+
+# 定义工具
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "获取指定城市的天气信息",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string", "description": "城市名称"}
+                },
+                "required": ["city"]
+            }
+        }
+    }
+]
+
+# 调用模型
+response = client.chat.completions.create(
+    model="kimi-k2.6",
+    messages=[{"role": "user", "content": "北京今天天气怎么样？"}],
+    tools=tools
+)
+
+# 检查工具调用
+if response.choices[0].finish_reason == "tool_calls":
+    for tool_call in response.choices[0].message.tool_calls:
+        print(f"调用工具: {tool_call.function.name}")
+        print(f"参数: {tool_call.function.arguments}")
+```
+
+**详细文档**: 查看 [docs/TOOL_CALLING.md](docs/TOOL_CALLING.md) 了解更多工具调用功能。
 
 ## 模型和参数
 

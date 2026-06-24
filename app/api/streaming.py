@@ -100,6 +100,8 @@ async def _create_streaming_chat_response(
     messages: List[Dict[str, Any]],
     conversation_id: Optional[str],
     enable_web_search: bool,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    tool_choice: str = "auto",
 ) -> AsyncIterator[str]:
     client: Optional[Kimi2API] = None
     try:
@@ -111,6 +113,8 @@ async def _create_streaming_chat_response(
             stream=True,
             conversation_id=conversation_id,
             enable_web_search=enable_web_search,
+            tools=tools,
+            tool_choice=tool_choice,
         )
         async for chunk in _stream_chat_chunks(stream, response_model):
             yield chunk
