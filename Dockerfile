@@ -11,7 +11,14 @@ RUN pip install --no-cache-dir uv
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project --compile-bytecode
+
+# 清理缓存并添加重试逻辑
+RUN rm -rf ~/.cache/uv /root/.cache/uv && \
+    (uv sync --frozen --no-dev --no-install-project --compile-bytecode || \
+     (echo "First attempt failed, retrying..." && sleep 2 && \
+      uv sync --frozen --no-dev --no-install-project --compile-bytecode) || \
+     (echo "Second attempt failed, trying without bytecode compilation..." && \
+      uv sync --frozen --no-dev --no-install-project))
 
 FROM python:3.12-slim AS runtime
 
