@@ -22,6 +22,9 @@ def _model_to_dict(model: KimiModelSpec, created: int) -> Dict[str, Any]:
         "thinking": model.thinking,
         "kimi_plus_id": model.kimi_plus_id,
         "agent_mode": model.agent_mode,
+        "model_key": model.model_key,
+        "context_length": model.context_length,
+        "reasoning_effort": model.reasoning_effort,
     }
 
 
@@ -85,8 +88,7 @@ def _extract_features(model: KimiModelSpec, payload: Dict[str, Any]) -> Dict[str
     enable_web_search = model.force_web_search or _extract_web_search_enabled(payload)
     if enable_web_search and not model.supports_web_search:
         raise ModelResolutionError(
-            f"Model `{model.id}` does not support web search; "
-            "use `kimi-k2.6` or `kimi-k2.6-thinking` instead"
+            f"Model `{model.id}` does not support web search"
         )
 
     return {

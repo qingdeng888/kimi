@@ -35,6 +35,11 @@ class KimiModelSpec:
     agent_mode: str = ""
     description: str = ""
     input_placeholder: str = ""
+    model_key: str = ""
+    context_length: str = ""
+    reasoning_effort: str = ""
+    upstream_thinking: Optional[bool] = None
+    enable_plugin: bool = False
 
     def __post_init__(self) -> None:
         if self.scenario == "SCENARIO_K2D5" and not self.supports_web_search:
@@ -107,6 +112,14 @@ def _model_suffix(
 
 
 def _model_id(raw_model: Dict[str, Any]) -> str:
+    model_key = str(_raw_value(raw_model, "key") or "").strip().lower()
+    if model_key == "k3":
+        return "kimi-k3"
+    if model_key == "k3-agent-ultra":
+        return "kimi-k3-agent-swarm"
+    if model_key == "k2d6":
+        return "kimi-k2.6"
+
     scenario = str(_raw_value(raw_model, "scenario") or "")
     display_name = str(_raw_value(raw_model, "displayName", "display_name") or scenario)
     thinking = bool(_raw_value(raw_model, "thinking"))
@@ -123,22 +136,137 @@ def _model_id(raw_model: Dict[str, Any]) -> str:
     return f"kimi-{version}" + (f"-{suffix}" if suffix else "")
 
 
-def _model_spec(raw_model: Dict[str, Any]) -> KimiModelSpec:
+def _model_spec(
+    raw_model: Dict[str, Any],
+    *,
+    model_id: Optional[str] = None,
+    display_name: Optional[str] = None,
+    thinking: Optional[bool] = None,
+    context_length: str = "",
+    reasoning_effort: str = "",
+) -> KimiModelSpec:
     scenario = str(_raw_value(raw_model, "scenario") or "")
-    display_name = str(_raw_value(raw_model, "displayName", "display_name") or scenario)
+    resolved_display_name = display_name or str(
+        _raw_value(raw_model, "displayName", "display_name") or scenario
+    )
+    resolved_thinking = (
+        bool(_raw_value(raw_model, "thinking")) if thinking is None else thinking
+    )
     return KimiModelSpec(
-        id=_model_id(raw_model),
-        display_name=display_name,
+        id=model_id or _model_id(raw_model),
+        display_name=resolved_display_name,
         scenario=scenario,
-        thinking=bool(_raw_value(raw_model, "thinking")),
-        supports_web_search=scenario == "SCENARIO_K2D5",
+        thinking=resolved_thinking,
+        supports_web_search=scenario in {"SCENARIO_K2D5", "SCENARIO_OK_COMPUTER"},
         kimi_plus_id=str(_raw_value(raw_model, "kimiPlusId", "kimi_plus_id") or ""),
         agent_mode=str(_raw_value(raw_model, "agentMode", "agent_mode") or ""),
         description=str(_raw_value(raw_model, "description") or ""),
         input_placeholder=str(
             _raw_value(raw_model, "inputPlaceholder", "input_placeholder") or ""
         ),
+        model_key=str(_raw_value(raw_model, "key") or ""),
+        context_length=context_length,
+        reasoning_effort=reasoning_effort,
+        upstream_thinking=True,
+        enable_plugin=True,
     )
+
+
+def _available_options(raw_model: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
+    options = raw_model.get(key) or []
+    if not isinstance(options, list):
+        return []
+    return [option for option in options if isinstance(option, dict)]
+
+
+def _context_option_is_available(option: Dict[str, Any]) -> bool:
+    if option.get("available") is True:
+        return True
+    if option.get("available") is False:
+        return False
+    if option.get("minMembershipLevel") or option.get("min_membership_level"):
+        return False
+    return True
+
+
+def _raw_model_is_available(raw_model: Dict[str, Any]) -> bool:
+    if raw_model.get("available") is True:
+        return True
+    if raw_model.get("available") is False:
+        return False
+    if raw_model.get("minMembershipLevel") or raw_model.get("min_membership_level"):
+        return False
+
+    model_key = str(_raw_value(raw_model, "key") or "").strip().lower()
+    agent_mode = str(_raw_value(raw_model, "agentMode", "agent_mode") or "")
+    if model_key == "k3-agent-ultra" and agent_mode == "TYPE_ULTRA":
+        return False
+    return True
+
+
+def _model_specs(raw_model: Dict[str, Any]) -> List[KimiModelSpec]:
+    if not _raw_model_is_available(raw_model):
+        return []
+
+    base_id = _model_id(raw_model)
+    base_name = str(_raw_value(raw_model, "displayName", "display_name") or base_id)
+
+    context_options = _available_options(raw_model, "contextLengthOptions")
+    if context_options:
+        default_context = str(raw_model.get("defaultContextLength") or "")
+        context_options = [
+            option for option in context_options if _context_option_is_available(option)
+        ]
+        if not context_options:
+            return [_model_spec(raw_model)]
+        specs: List[KimiModelSpec] = []
+        for option in context_options:
+            context_length = str(option.get("contextLength") or "")
+            is_default = context_length == default_context or (
+                not default_context and not specs
+            )
+            if is_default:
+                suffix = ""
+            elif context_length == "CONTEXT_LENGTH_XL":
+                suffix = "-long"
+            else:
+                suffix = "-" + context_length.lower().replace("context_length_", "")
+            option_name = str(option.get("displayName") or "").strip()
+            specs.append(
+                _model_spec(
+                    raw_model,
+                    model_id=base_id + suffix,
+                    display_name=(
+                        base_name if is_default else f"{base_name} · {option_name}"
+                    ),
+                    context_length=context_length,
+                )
+            )
+        return specs
+
+    reasoning_options = _available_options(raw_model, "reasoningEffortOptions")
+    if reasoning_options:
+        default_effort = str(raw_model.get("defaultReasoningEffort") or "")
+        specs = []
+        for option in reasoning_options:
+            effort = str(option.get("effort") or "")
+            is_default = effort == default_effort or (not default_effort and not specs)
+            suffix = "" if is_default else "-thinking"
+            option_name = str(option.get("displayName") or "").strip()
+            specs.append(
+                _model_spec(
+                    raw_model,
+                    model_id=base_id + suffix,
+                    display_name=(
+                        base_name if is_default else f"{base_name} · {option_name}"
+                    ),
+                    thinking=not is_default,
+                    reasoning_effort=effort,
+                )
+            )
+        return specs
+
+    return [_model_spec(raw_model)]
 
 
 def _dedupe_models(models: Iterable[KimiModelSpec]) -> List[KimiModelSpec]:
@@ -170,6 +298,11 @@ def _search_alias(model: KimiModelSpec) -> KimiModelSpec:
             else "Web search enabled"
         ),
         input_placeholder=model.input_placeholder,
+        model_key=model.model_key,
+        context_length=model.context_length,
+        reasoning_effort=model.reasoning_effort,
+        upstream_thinking=model.upstream_thinking,
+        enable_plugin=model.enable_plugin,
     )
 
 
@@ -180,6 +313,7 @@ def _with_search_aliases(models: List[KimiModelSpec]) -> List[KimiModelSpec]:
         if (
             not model.supports_web_search
             or model.force_web_search
+            or bool(model.kimi_plus_id)
             or model.id.endswith("-search")
         ):
             continue
@@ -214,9 +348,10 @@ def parse_model_catalog(data: Dict[str, Any]) -> KimiModelCatalog:
     if not isinstance(raw_models, list):
         raise KimiAPIError("Kimi model catalog response is invalid")
     models = _dedupe_models(
-        _model_spec(raw_model)
+        model
         for raw_model in raw_models
         if isinstance(raw_model, dict)
+        for model in _model_specs(raw_model)
     )
     default_scenario = data.get("defaultScenario") or data.get("default_scenario") or {}
     if not isinstance(default_scenario, dict):

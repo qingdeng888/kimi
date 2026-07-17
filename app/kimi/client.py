@@ -341,6 +341,7 @@ class Kimi2API:
                 }
             ],
             "scenario": model_spec.scenario,
+            "is_goal": False,
         }
         if context.last_assistant_message_id:
             message["parent_id"] = context.last_assistant_message_id
@@ -354,13 +355,23 @@ class Kimi2API:
             ),
             "message": message,
             "options": {
-                "thinking": model_spec.thinking,
+                "thinking": (
+                    model_spec.thinking
+                    if model_spec.upstream_thinking is None
+                    else model_spec.upstream_thinking
+                ),
+                "enable_plugin": model_spec.enable_plugin,
             },
+            "project_id": "",
         }
+        if model_spec.context_length:
+            payload["options"]["context_length"] = model_spec.context_length
+        if model_spec.reasoning_effort:
+            payload["options"]["reasoning_effort"] = model_spec.reasoning_effort
         if model_spec.kimi_plus_id:
-            payload["kimiplusId"] = model_spec.kimi_plus_id
+            payload["kimiplus_id"] = model_spec.kimi_plus_id
         if model_spec.agent_mode:
-            payload["agentMode"] = model_spec.agent_mode
+            payload["agent_mode"] = model_spec.agent_mode
         if context.remote_chat_id:
             payload["chat_id"] = context.remote_chat_id
         return payload

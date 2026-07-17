@@ -117,12 +117,15 @@ def test_explicit_thinking_text_remains_reasoning_content():
 def test_build_chat_payload_uses_resolved_model_spec_fields():
     client = Kimi2API.__new__(Kimi2API)
     spec = KimiModelSpec(
-        id="kimi-k2.6-agent",
-        display_name="K2.6 Agent",
+        id="kimi-k3",
+        display_name="K3 · Max",
         scenario="SCENARIO_OK_COMPUTER",
         thinking=False,
         kimi_plus_id="ok-computer",
         agent_mode="TYPE_NORMAL",
+        context_length="CONTEXT_LENGTH_L",
+        upstream_thinking=True,
+        enable_plugin=True,
     )
 
     payload = client._build_chat_payload(
@@ -134,9 +137,17 @@ def test_build_chat_payload_uses_resolved_model_spec_fields():
 
     assert payload["scenario"] == "SCENARIO_OK_COMPUTER"
     assert payload["message"]["scenario"] == "SCENARIO_OK_COMPUTER"
-    assert payload["options"]["thinking"] is False
-    assert payload["kimiplusId"] == "ok-computer"
-    assert payload["agentMode"] == "TYPE_NORMAL"
+    assert payload["options"] == {
+        "thinking": True,
+        "enable_plugin": True,
+        "context_length": "CONTEXT_LENGTH_L",
+    }
+    assert payload["kimiplus_id"] == "ok-computer"
+    assert payload["agent_mode"] == "TYPE_NORMAL"
+    assert payload["project_id"] == ""
+    assert payload["message"]["is_goal"] is False
+    assert "kimiplusId" not in payload
+    assert "agentMode" not in payload
 
 
 def test_build_chat_payload_preserves_thinking_model_flag():
@@ -146,6 +157,9 @@ def test_build_chat_payload_preserves_thinking_model_flag():
         display_name="K2.6 Thinking",
         scenario="SCENARIO_K2D5",
         thinking=True,
+        reasoning_effort="REASONING_EFFORT_LOW",
+        upstream_thinking=True,
+        enable_plugin=True,
     )
 
     payload = client._build_chat_payload(
@@ -156,9 +170,13 @@ def test_build_chat_payload_preserves_thinking_model_flag():
     )
 
     assert payload["scenario"] == "SCENARIO_K2D5"
-    assert payload["options"]["thinking"] is True
-    assert "kimiplusId" not in payload
-    assert "agentMode" not in payload
+    assert payload["options"] == {
+        "thinking": True,
+        "enable_plugin": True,
+        "reasoning_effort": "REASONING_EFFORT_LOW",
+    }
+    assert "kimiplus_id" not in payload
+    assert "agent_mode" not in payload
 
 
 @pytest.mark.asyncio
