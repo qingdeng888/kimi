@@ -40,18 +40,18 @@ def test_v1_models_returns_dynamic_kimi_web_models(api_client, configured_api_ke
     assert response.status_code == 200
     data = response.json()["data"]
     assert [model["id"] for model in data] == [
+        "kimi-k3",
         "kimi-k2.6",
         "kimi-k2.6-thinking",
-        "kimi-k2.6-agent",
-        "kimi-k2.6-agent-swarm",
         "kimi-k2.6-search",
         "kimi-k2.6-thinking-search",
     ]
     assert "kimi-k2.5-search" not in {model["id"] for model in data}
-    assert data[0]["scenario"] == "SCENARIO_K2D5"
-    assert data[1]["thinking"] is True
-    assert data[4]["thinking"] is False
-    assert data[5]["thinking"] is True
+    assert data[0]["scenario"] == "SCENARIO_OK_COMPUTER"
+    assert data[0]["context_length"] == "CONTEXT_LENGTH_L"
+    assert data[1]["reasoning_effort"] == "REASONING_EFFORT_NONE"
+    assert data[2]["reasoning_effort"] == "REASONING_EFFORT_LOW"
+    assert data[2]["thinking"] is True
     assert all("supports_web_search" not in model for model in data)
 
 
@@ -163,18 +163,13 @@ async def test_search_alias_models_enable_search_automatically():
     assert thinking["enable_thinking"] is True
 
 
-def test_chat_rejects_web_search_for_agent_model(api_client, configured_api_key):
-    response = api_client.post(
-        "/v1/chat/completions",
-        headers={"Authorization": f"Bearer {configured_api_key.key}"},
-        json={
-            "model": "kimi-k2.6-agent",
-            "tools": [{"type": "web_search"}],
-            "messages": [{"role": "user", "content": "today's Shenzhen weather"}],
-        },
-    )
+async def test_k3_supports_web_search():
+    from app.api.models import _resolve_model
 
-    assert response.status_code == 400
-    body = response.json()
-    assert body["error"]["type"] == "invalid_request_error"
-    assert "does not support web search" in body["error"]["message"]
+    features = await _resolve_model({
+        "model": "kimi-k3",
+        "tools": [{"type": "web_search"}],
+        "messages": [{"role": "user", "content": "today's Shenzhen weather"}],
+    })
+
+    assert features["enable_web_search"] is True

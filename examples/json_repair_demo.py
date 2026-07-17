@@ -111,12 +111,7 @@ def demo_real_tool_call():
     model_output = """
     让我帮你查询天气。
 
-    <|DSML|tool_calls>
-      <|DSML|invoke name="get_weather">
-        <|DSML|parameter name="city"><![CDATA[{'name': 'Beijing', 'country': 'China',}]]></|DSML|parameter>
-        <|DSML|parameter name="days">7</|DSML|parameter>
-      </|DSML|invoke>
-    </|DSML|tool_calls>
+    <tool_call>{'name':'get_weather','arguments':{'city':'Beijing','days':7,}}</tool_call>
     """
 
     print("\n模型输出（包含错误 JSON）:")

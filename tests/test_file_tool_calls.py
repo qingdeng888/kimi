@@ -107,24 +107,6 @@ class TestFileToolCalls:
         assert args["file"]["size"] == 1024
         assert args["metadata"]["author"] == "User"
 
-    def test_dsml_format_still_works(self):
-        """确保 DSML 格式仍然正常工作"""
-        text = """我来查询文件。
-
-<|DSML|tool_calls>
-  <|DSML|invoke name="read_file">
-    <|DSML|parameter name="path"><![CDATA[/home/user/document.txt]]></|DSML|parameter>
-  </|DSML|invoke>
-</|DSML|tool_calls>"""
-
-        content, calls = parse_tool_calls_from_text(text)
-
-        assert len(calls) == 1
-        assert calls[0]["function"]["name"] == "read_file"
-
-        args = json.loads(calls[0]["function"]["arguments"])
-        assert args["path"] == "/home/user/document.txt"
-
     def test_build_prompt_detects_file_tools(self):
         """测试提示构建能检测文件相关工具"""
         tools = [
@@ -147,14 +129,14 @@ class TestFileToolCalls:
 
         prompt = build_tool_prompt_block(tools)
 
-        # 应该包含 JSON 格式说明
-        assert "JSON format" in prompt or "simplified" in prompt.lower()
-        assert "file" in prompt.lower()
+        assert "<tool_call>" in prompt
+        assert '"name":"send_file"' in prompt
+        assert '"file_content"' in prompt
 
     def test_json_with_single_quotes(self):
         """测试 JSON 修复机制对单引号的处理"""
         # 注意：单引号 JSON 需要先被识别为 JSON 结构，才能进入修复流程
-        # 目前的正则主要匹配双引号，单引号的修复主要用于 CDATA 和明确的 JSON 块
+        # 单引号修复用于明确的 JSON 工具调用块
         text = """创建文件。
 
 ```json

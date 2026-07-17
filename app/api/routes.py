@@ -183,6 +183,7 @@ async def create_chat_completion(request: Request) -> Any:
                 conversation_id=conversation_id,
                 enable_web_search=features["enable_web_search"],
                 tools_enabled=tools_enabled,
+                tools=payload.get("tools"),
             ),
             media_type="text/event-stream",
             headers={
@@ -204,7 +205,7 @@ async def create_chat_completion(request: Request) -> Any:
         result.model = features["request_model"]
         response = _chat_completion_to_dict(result)
         if tools_enabled:
-            response = _apply_tool_calls(response)
+            response = _apply_tool_calls(response, payload.get("tools"))
         return response
 
 

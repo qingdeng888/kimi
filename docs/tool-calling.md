@@ -15,7 +15,7 @@
 
 ## 概述
 
-Kimi2API 通过 DSML 协议在 prompt 层实现了 OpenAI 格式的工具调用功能。支持：
+Kimi2API 通过中性 JSON 包装协议在 prompt 层实现 OpenAI 格式的工具调用。支持：
 
 - ✅ 流式和非流式输出
 - ✅ 多工具并行调用
@@ -24,9 +24,10 @@ Kimi2API 通过 DSML 协议在 prompt 层实现了 OpenAI 格式的工具调用�
 
 **技术实现：**
 - 将工具定义注入到系统 prompt 中
-- 模型返回 DSML 格式的工具调用
+- 模型主要返回 `<tool_call>{JSON}</tool_call>` 格式的工具调用
 - 自动解析并转换为 OpenAI 兼容格式
-- 支持 JSON 格式回退解析
+- 非流式支持严格限定的末尾 JSON 回退解析
+- 只接受请求中声明的工具，并根据 JSON Schema 规范化参数类型
 
 ---
 
@@ -537,7 +538,7 @@ LOG_LEVEL=DEBUG python run.py
 
 查看日志中的工具调用信息：
 ```
-DEBUG kimi2api.api.toolcall Parsed tool calls using strategy: dsml_format
+DEBUG kimi2api.api.toolcall Parsed tool calls using strategy: neutral_tool_call
 DEBUG kimi2api.api.toolcall Tool call: get_weather({"city": "北京"})
 ```
 

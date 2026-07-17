@@ -164,9 +164,8 @@ def _wrap_urls(text: str) -> str:
 def _format_messages(messages: List[Message]) -> str:
     """Format messages into a single text payload for the Kimi backend.
 
-    Tool calls and tool results are serialized using DSML format for
-    consistency with the prompt-level tool calling approach. This ensures
-    the model sees the same format in both injected context and history.
+    Tool calls and tool results use the same neutral JSON envelope as the
+    prompt-level tool calling implementation.
     """
     system_lines: List[str] = []
     body_lines: List[str] = []
@@ -176,25 +175,18 @@ def _format_messages(messages: List[Message]) -> str:
         text = message.text_content().strip()
 
         if role == "assistant" and message.tool_calls:
-            # Serialize tool calls in DSML format for consistency with the
-            # prompt-level tool calling approach. This way the model sees the
-            # same DSML format in history as what it's expected to produce.
             from ..api.toolcall import serialize_assistant_tool_calls
-            dsml_block = serialize_assistant_tool_calls(message.tool_calls)
-            if dsml_block:
-                text = f"{text}\n{dsml_block}" if text else dsml_block
+            tool_call_block = serialize_assistant_tool_calls(message.tool_calls)
+            if tool_call_block:
+                text = f"{text}\n{tool_call_block}" if text else tool_call_block
 
         if role == "tool" and message.tool_call_id:
-            # Convert tool results to DSML tool_result format
-            from ..api.toolcall import serialize_tool_result, _escape_attr, _escape_cdata
-            tool_id = message.tool_call_id or ""
-            name = message.name or ""
-            content = text
-            name_attr = f' name="{_escape_attr(name)}"' if name else ""
-            text = (
-                f'<|DSML|tool_result tool_use_id="{_escape_attr(tool_id)}"{name_attr}>'
-                f"<![CDATA[{_escape_cdata(content)}]]></|DSML|tool_result>"
-            )
+            from ..api.toolcall import serialize_tool_result
+            text = serialize_tool_result({
+                "tool_call_id": message.tool_call_id,
+                "name": message.name,
+                "content": text,
+            })
             role = "user"
 
         if not text:

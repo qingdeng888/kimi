@@ -67,8 +67,11 @@ def _chat_completion_to_dict(response: ChatCompletion) -> Dict[str, Any]:
     }
 
 
-def _apply_tool_calls(response: Dict[str, Any]) -> Dict[str, Any]:
-    """Parse a trailing DSML tool-call block out of the assistant message.
+def _apply_tool_calls(
+    response: Dict[str, Any],
+    tools: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Parse a trailing neutral tool-call block out of the assistant message.
 
     When tool calls are present, the message content is replaced with the text
     preceding the block (``None`` if empty), ``tool_calls`` is populated, and
@@ -80,8 +83,11 @@ def _apply_tool_calls(response: Dict[str, Any]) -> Dict[str, Any]:
 
     choice = choices[0]
     message = choice.get("message") or {}
-    content, tool_calls = parse_tool_calls_from_text(message.get("content"))
+    original_content = message.get("content")
+    content, tool_calls = parse_tool_calls_from_text(original_content, tools)
     if not tool_calls:
+        if content != (original_content or ""):
+            message["content"] = content or None
         return response
 
     message["content"] = content or None

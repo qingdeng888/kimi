@@ -35,14 +35,9 @@ WEATHER_TOOLS = [
     }
 ]
 
-DSML_RESPONSE = (
+NEUTRAL_RESPONSE = (
     "Sure, let me check.\n"
-    "<|DSML|tool_calls>\n"
-    '  <|DSML|invoke name="get_weather">\n'
-    '    <|DSML|parameter name="city"><![CDATA[Shenzhen]]></|DSML|parameter>\n'
-    '    <|DSML|parameter name="days">3</|DSML|parameter>\n'
-    "  </|DSML|invoke>\n"
-    "</|DSML|tool_calls>"
+    '<tool_call>{"name":"get_weather","arguments":{"city":"Shenzhen","days":"3"}}</tool_call>'
 )
 
 
@@ -74,7 +69,8 @@ def test_has_tools_handles_missing_tools():
 def test_build_tool_prompt_block_lists_only_function_tools():
     block = build_tool_prompt_block(WEATHER_TOOLS + [{"type": "web_search"}])
     assert "get_weather" in block
-    assert "<|DSML|tool_calls>" in block
+    assert "<tool_call>" in block
+    assert "<tool_call>" in block
     assert "web_search" not in block
     assert '"city"' in block  # schema is embedded
 
@@ -83,32 +79,33 @@ def test_build_tool_prompt_block_lists_only_function_tools():
 # Non-streaming parsing
 # ---------------------------------------------------------------------------
 
-def test_parse_tool_calls_extracts_block_and_strips_content():
-    content, calls = parse_tool_calls_from_text(DSML_RESPONSE)
-    assert content == "Sure, let me check."
-    assert len(calls) == 1
-    assert calls[0]["type"] == "function"
-    assert calls[0]["id"].startswith("call_")
-    assert calls[0]["function"]["name"] == "get_weather"
-    args = json.loads(calls[0]["function"]["arguments"])
-    assert args == {"city": "Shenzhen", "days": 3}
-    assert isinstance(args["days"], int)
-
-
 def test_parse_tool_calls_returns_text_when_no_block():
     content, calls = parse_tool_calls_from_text("just a normal reply")
     assert content == "just a normal reply"
     assert calls == []
 
 
-def test_parse_tool_calls_handles_multiple_invokes_and_types():
+def test_parse_neutral_tool_call_applies_whitelist_and_schema():
+    content, calls = parse_tool_calls_from_text(NEUTRAL_RESPONSE, WEATHER_TOOLS)
+    assert content == "Sure, let me check."
+    assert calls[0]["function"]["name"] == "get_weather"
+    assert json.loads(calls[0]["function"]["arguments"]) == {
+        "city": "Shenzhen",
+        "days": 3,
+    }
+
+
+def test_parse_neutral_tool_call_rejects_undeclared_tool():
+    text = '<tool_call>{"name":"delete_everything","arguments":{}}</tool_call>'
+    content, calls = parse_tool_calls_from_text(text, WEATHER_TOOLS)
+    assert content == ""
+    assert calls == []
+
+
+def test_parse_tool_calls_handles_multiple_blocks_and_types():
     text = (
-        "<|DSML|tool_calls>\n"
-        '<|DSML|invoke name="a"><|DSML|parameter name="flag">true</|DSML|parameter></|DSML|invoke>\n'
-        '<|DSML|invoke name="b">'
-        '<|DSML|parameter name="obj"><![CDATA[{"k": [1, 2]}]]></|DSML|parameter>'
-        "</|DSML|invoke>\n"
-        "</|DSML|tool_calls>"
+        '<tool_call>{"name":"a","arguments":{"flag":true}}</tool_call>\n'
+        '<tool_call>{"name":"b","arguments":{"obj":{"k":[1,2]}}}</tool_call>'
     )
     content, calls = parse_tool_calls_from_text(text)
     assert content == ""
@@ -131,16 +128,17 @@ def test_serialize_assistant_tool_calls_round_trips():
             }
         ]
     )
-    assert serialized.startswith("<|DSML|tool_calls>")
-    _, calls = parse_tool_calls_from_text(serialized)
+    assert serialized.startswith("<tool_call>")
+    _, calls = parse_tool_calls_from_text(serialized, WEATHER_TOOLS)
     assert calls[0]["function"]["name"] == "get_weather"
     assert json.loads(calls[0]["function"]["arguments"]) == {"city": "Tokyo"}
 
 
-def test_serialize_tool_result_wraps_content_in_cdata():
+def test_serialize_tool_result_uses_neutral_json_block():
     rendered = serialize_tool_result({"tool_call_id": "call_1", "content": "sunny"})
-    assert 'tool_use_id="call_1"' in rendered
-    assert "<![CDATA[sunny]]>" in rendered
+    assert rendered.startswith("<tool_result>")
+    assert '"tool_call_id":"call_1"' in rendered
+    assert '"content":"sunny"' in rendered
 
 
 def test_inject_tool_call_context_rewrites_messages():
@@ -164,7 +162,7 @@ def test_inject_tool_call_context_rewrites_messages():
     assert injected[0]["role"] == "system"
     assert "get_weather" in injected[0]["content"]
     assert injected[1] == {"role": "user", "content": "weather?"}
-    assert "<|DSML|tool_calls>" in injected[2]["content"]
+    assert "<tool_call>" in injected[2]["content"]
     assert "tool_calls" not in injected[2]
     assert injected[3]["role"] == "user"
     assert "tool_result" in injected[3]["content"]
@@ -189,30 +187,37 @@ def _drive_sieve(sieve, chunks):
     return text, deltas
 
 
-def test_sieve_splits_text_and_tool_calls_across_chunks():
-    chunks = [DSML_RESPONSE[i : i + 5] for i in range(0, len(DSML_RESPONSE), 5)]
-    text, deltas = _drive_sieve(ToolCallSieve(), chunks)
-    assert text == "Sure, let me check.\n"
-    assert len(deltas) == 1
-    assert deltas[0]["index"] == 0
-    assert deltas[0]["function"]["name"] == "get_weather"
-    assert json.loads(deltas[0]["function"]["arguments"])["city"] == "Shenzhen"
-
-
 def test_sieve_passes_through_plain_text():
     text, deltas = _drive_sieve(ToolCallSieve(), ["Hello ", "world", "!"])
     assert text == "Hello world!"
     assert deltas == []
 
 
+def test_sieve_parses_neutral_protocol_across_chunks():
+    chunks = [NEUTRAL_RESPONSE[i:i + 3] for i in range(0, len(NEUTRAL_RESPONSE), 3)]
+    text, deltas = _drive_sieve(ToolCallSieve(WEATHER_TOOLS), chunks)
+    assert text == "Sure, let me check.\n"
+    assert len(deltas) == 1
+    assert json.loads(deltas[0]["function"]["arguments"])["days"] == 3
+
+
+def test_sieve_does_not_intercept_tool_example_inside_code_fence():
+    example = '```xml\n<tool_call>{"name":"get_weather","arguments":{}}</tool_call>\n```'
+    text, deltas = _drive_sieve(ToolCallSieve(WEATHER_TOOLS), [example[:8], example[8:]])
+    assert text == example
+    assert deltas == []
+
+
 def test_sieve_holds_back_partial_open_marker():
     sieve = ToolCallSieve()
-    first, _ = sieve.push("abc<|DS")
+    first, _ = sieve.push("abc<tool_")
     assert first == "abc"
     rest, deltas = sieve.push(
-        'ML|tool_calls><|DSML|invoke name="f"></|DSML|invoke></|DSML|tool_calls>'
+        'call>{"name":"f","arguments":{}}</tool_call>'
     )
     assert rest == ""
+    flush_text, deltas = sieve.flush()
+    assert flush_text == ""
     assert deltas and deltas[0]["function"]["name"] == "f"
 
 
@@ -293,7 +298,7 @@ def _sse_events(body):
 def test_chat_completion_non_streaming_returns_tool_calls(
     api_client, configured_api_key, monkeypatch
 ):
-    captured = _install_fake_client(monkeypatch, DSML_RESPONSE)
+    captured = _install_fake_client(monkeypatch, NEUTRAL_RESPONSE)
 
     response = api_client.post(
         "/v1/chat/completions",
@@ -346,7 +351,7 @@ def test_chat_completion_without_tools_is_unaffected(
 def test_chat_completion_streaming_emits_tool_calls(
     api_client, configured_api_key, monkeypatch
 ):
-    _install_fake_client(monkeypatch, DSML_RESPONSE)
+    _install_fake_client(monkeypatch, NEUTRAL_RESPONSE)
 
     with api_client.stream(
         "POST",

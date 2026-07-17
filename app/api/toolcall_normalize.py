@@ -1,151 +1,13 @@
 """
 工具调用规范化模块
 
-参考 qwen2API 项目的优秀实践，实现：
-1. 工具名称规范化（Tool Name Canonicalization）
-2. 参数名称修复（Parameter Name Coercion）
-3. Schema 驱动的类型转换
-4. 参数污染检测
-
-这些功能显著提升工具调用的容错性和成功率。
+提供模型无关的工具名称匹配、Schema 类型转换和去重能力。
+主调用链只在请求声明的工具集合内匹配，不包含 Qwen/Agent 专用固定别名。
 """
 
 import re
 import json
 from typing import Any, Dict, List, Optional, Set
-
-
-# ============================================================================
-# 工具名称别名映射
-# ============================================================================
-
-TOOL_ALIASES = {
-    # Bash 相关
-    "bash": "Bash",
-    "shell": "Bash",
-    "shell_run": "Bash",
-    "run_command": "Bash",
-    "execute": "Bash",
-    "run_bash": "Bash",
-    "execute_command": "Bash",
-
-    # Read 相关
-    "read": "Read",
-    "read_file": "Read",
-    "fs_open_file": "Read",
-    "open_file": "Read",
-    "get_file": "Read",
-    "load_file": "Read",
-    "view_file": "Read",
-
-    # Write 相关
-    "write": "Write",
-    "write_file": "Write",
-    "fs_put_file": "Write",
-    "create_file": "Write",
-    "save_file": "Write",
-    "put_file": "Write",
-
-    # Edit 相关
-    "edit": "Edit",
-    "edit_file": "Edit",
-    "fs_patch_file": "Edit",
-    "modify_file": "Edit",
-    "update_file": "Edit",
-    "patch_file": "Edit",
-    "change_file": "Edit",
-
-    # Grep 相关
-    "grep": "Grep",
-    "search": "Grep",
-    "text_search": "Grep",
-    "find_text": "Grep",
-    "search_text": "Grep",
-
-    # Glob 相关
-    "glob": "Glob",
-    "find": "Glob",
-    "path_find": "Glob",
-    "find_files": "Glob",
-    "list_files": "Glob",
-
-    # WebFetch 相关
-    "webfetch": "WebFetch",
-    "fetch": "WebFetch",
-    "http_get": "WebFetch",
-    "http_get_url": "WebFetch",
-    "get_url": "WebFetch",
-
-    # WebSearch 相关
-    "websearch": "WebSearch",
-    "web_search": "WebSearch",
-    "web_query": "WebSearch",
-    "search_web": "WebSearch",
-    "google": "WebSearch",
-
-    # NotebookEdit 相关
-    "notebookedit": "NotebookEdit",
-    "notebook_edit": "NotebookEdit",
-    "notebook_patch": "NotebookEdit",
-    "edit_notebook": "NotebookEdit",
-}
-
-
-# ============================================================================
-# 参数名称别名映射
-# ============================================================================
-
-PARAMETER_ALIASES = {
-    "Read": {
-        "file_path": ["path", "filename", "file", "filepath", "target", "target_file"],
-    },
-    "Write": {
-        "file_path": ["path", "filename", "file", "filepath", "target", "target_file"],
-        "content": ["text", "body", "data", "file_content", "contents", "value"],
-    },
-    "Bash": {
-        "command": ["cmd", "script", "code", "shell_command", "bash_command"],
-    },
-    "Edit": {
-        "file_path": ["path", "filename", "file", "filepath", "target", "target_file"],
-        "old_string": ["old", "search", "pattern", "find", "search_text"],
-        "new_string": ["new", "replace", "replacement", "substitute", "replace_text"],
-    },
-    "Grep": {
-        "pattern": ["search", "query", "text", "search_text", "find"],
-    },
-    "Glob": {
-        "pattern": ["path", "search", "query", "glob_pattern", "file_pattern"],
-    },
-    "WebFetch": {
-        "url": ["link", "uri", "address", "web_url"],
-    },
-    "WebSearch": {
-        "query": ["search", "q", "search_query", "search_text"],
-    },
-}
-
-
-# ============================================================================
-# 污染检测模式
-# ============================================================================
-
-POLLUTION_MARKERS = [
-    # 格式标记
-    "<|dsml|", "</|dsml|", "<![cdata[", "]]>",
-    "<tool_calls>", "</tool_calls>",
-    "<invoke", "</invoke>", "<parameter", "</parameter>",
-    "qnml|", "|qnml",
-    "function.name:", "function.arguments:",
-
-    # 自然语言（中文）
-    "我将", "我会", "我先", "首先", "现在", "接下来", "然后", "继续执行",
-    "开始执行", "让我", "我需要", "目录已创建",
-
-    # 自然语言（英文）
-    "i will", "i'll", "i am going to", "now i", "next i", "first i",
-    "let me", "i need to", "i'm going to", "i should",
-]
 
 
 # ============================================================================
@@ -156,10 +18,7 @@ def canonicalize_tool_name(name: str, available_tools: List[str]) -> Optional[st
     """
     规范化工具名称，支持：
     1. 精确匹配（忽略大小写）
-    2. 别名映射
-    3. 模糊匹配（移除特殊字符）
-
-    参考 qwen2API 的实现
+    2. 安全标识符匹配（移除大小写与分隔符差异）
     """
     if not name or not isinstance(name, str):
         return None
@@ -175,12 +34,7 @@ def canonicalize_tool_name(name: str, available_tools: List[str]) -> Optional[st
     if name.lower() in available_lower:
         return available_lower[name.lower()]
 
-    # 2. 检查别名映射
-    canonical = TOOL_ALIASES.get(name.lower())
-    if canonical and canonical.lower() in available_lower:
-        return available_lower[canonical.lower()]
-
-    # 3. 模糊匹配（移除特殊字符和空格）
+    # 2. 仅在请求声明集合内做安全标识符匹配
     normalized_name = _normalize_identifier(name)
     for tool in available_tools:
         if _normalize_identifier(tool) == normalized_name:
@@ -199,33 +53,8 @@ def _normalize_identifier(text: str) -> str:
 # ============================================================================
 
 def coerce_tool_parameters(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    修复参数名称，将常见的别名转换为标准名称
-
-    参考 qwen2API 的 CoerceToolInput 实现
-    """
-    if not isinstance(params, dict):
-        return params
-
-    # 获取该工具的参数别名映射
-    aliases = PARAMETER_ALIASES.get(tool_name, )
-    if not aliases:
-        return params
-
-    fixed = params.copy()
-
-    # 对每个标准参数名，检查是否存在别名
-    for canonical, alias_list in aliases.items():
-        if canonical in fixed:
-            continue  # 标准名称已存在，不需要修复
-
-        # 查找第一个存在的别名
-        for alias in alias_list:
-            if alias in fixed:
-                fixed[canonical] = fixed.pop(alias)
-                break
-
-    return fixed
+    """保留调用方参数名；Kimi 通道不使用模型专用参数别名。"""
+    return params.copy() if isinstance(params, dict) else params
 
 
 # ============================================================================
@@ -283,11 +112,13 @@ def _coerce_value_by_schema(value: Any, schema: Dict[str, Any]) -> Any:
             try:
                 parsed = json.loads(value)
                 if isinstance(parsed, list):
-                    return parsed
+                    value = parsed
                 elif isinstance(parsed, dict):
-                    return [parsed]
+                    value = [parsed]
             except (json.JSONDecodeError, ValueError):
                 pass
+        if isinstance(value, list) and isinstance(schema.get("items"), dict):
+            return [_coerce_value_by_schema(item, schema["items"]) for item in value]
 
     # 如果 Schema 要求 object，但值是字符串，尝试解析
     elif param_type == "object":
@@ -295,9 +126,16 @@ def _coerce_value_by_schema(value: Any, schema: Dict[str, Any]) -> Any:
             try:
                 parsed = json.loads(value)
                 if isinstance(parsed, dict):
-                    return parsed
+                    value = parsed
             except (json.JSONDecodeError, ValueError):
                 pass
+        if isinstance(value, dict):
+            properties = schema.get("properties") or {}
+            return {
+                key: _coerce_value_by_schema(item, properties[key])
+                if isinstance(properties.get(key), dict) else item
+                for key, item in value.items()
+            }
 
     # 如果 Schema 要求 string，但值是其他类型
     elif param_type == "string":
@@ -306,6 +144,27 @@ def _coerce_value_by_schema(value: Any, schema: Dict[str, Any]) -> Any:
                 return json.dumps(value, ensure_ascii=False)
             else:
                 return str(value)
+
+    elif param_type == "integer":
+        if isinstance(value, str):
+            try:
+                return int(value.strip())
+            except ValueError:
+                pass
+
+    elif param_type == "number":
+        if isinstance(value, str):
+            try:
+                return float(value.strip())
+            except ValueError:
+                pass
+
+    elif param_type == "boolean" and isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "off"}:
+            return False
 
     return value
 
@@ -318,67 +177,19 @@ def _get_tool_schema(tool_name: str, tools: List[Dict[str, Any]]) -> Optional[Di
         # 2. {"function": {"name": "Tool", "parameters": {...}}}
 
         name = tool.get("name")
-        schema = tool.get("parameters")
+        schema = tool.get("parameters") or tool.get("input_schema")
 
         if "function" in tool and isinstance(tool["function"], dict):
             fn = tool["function"]
             if not name:
                 name = fn.get("name")
             if not schema:
-                schema = fn.get("parameters")
+                schema = fn.get("parameters") or fn.get("input_schema")
 
         if name == tool_name and isinstance(schema, dict):
             return schema
 
     return None
-
-
-# ============================================================================
-# 参数污染检测
-# ============================================================================
-
-def is_parameter_polluted(param_name: str, param_value: Any) -> bool:
-    """
-    检测参数值是否被污染（包含格式标记或自然语言）
-
-    参考 qwen2API 的 pathLikeArgLooksPolluted 实现
-    """
-    if not isinstance(param_value, str):
-        return False
-
-    value = param_value.strip()
-    if not value:
-        return False
-
-    # 检查是否包含空字符
-    if '\x00' in value:
-        return True
-
-    # 检查是否包含换行、尖括号等
-    if any(char in value for char in '\r\n<>'):
-        return True
-
-    value_lower = value.lower()
-
-    # 检查污染标记
-    for marker in POLLUTION_MARKERS:
-        if marker in value_lower:
-            return True
-
-    return False
-
-
-def filter_polluted_parameters(params: Dict[str, Any]) -> Dict[str, Any]:
-    """过滤掉被污染的参数"""
-    if not isinstance(params, dict):
-        return params
-
-    filtered = {}
-    for key, value in params.items():
-        if not is_parameter_polluted(key, value):
-            filtered[key] = value
-
-    return filtered
 
 
 # ============================================================================
@@ -407,12 +218,9 @@ def normalize_tool_call(
     # 3. Schema 驱动的类型转换
     typed_params = coerce_by_schema(canonical_name, fixed_params, tools_schema)
 
-    # 4. 过滤污染参数
-    clean_params = filter_polluted_parameters(typed_params)
-
     return {
         "name": canonical_name,
-        "parameters": clean_params
+        "parameters": typed_params
     }
 
 

@@ -47,8 +47,9 @@ async def _stream_chat_chunks(
     stream: AsyncIterator[ChatCompletionChunk],
     response_model: str,
     tools_enabled: bool = False,
+    tools: Optional[List[Dict[str, Any]]] = None,
 ) -> AsyncIterator[str]:
-    sieve = ToolCallSieve() if tools_enabled else None
+    sieve = ToolCallSieve(tools) if tools_enabled else None
     tool_calls_emitted = False
     content_emitted = False
 
@@ -177,6 +178,7 @@ async def _create_streaming_chat_response(
     conversation_id: Optional[str],
     enable_web_search: bool,
     tools_enabled: bool = False,
+    tools: Optional[List[Dict[str, Any]]] = None,
 ) -> AsyncIterator[str]:
     client: Optional[Kimi2API] = None
     try:
@@ -189,7 +191,7 @@ async def _create_streaming_chat_response(
             conversation_id=conversation_id,
             enable_web_search=enable_web_search,
         )
-        async for chunk in _stream_chat_chunks(stream, response_model, tools_enabled):
+        async for chunk in _stream_chat_chunks(stream, response_model, tools_enabled, tools):
             yield chunk
     except KimiAPIError as exc:
         _mark_stream_error(request, str(exc), exc)
